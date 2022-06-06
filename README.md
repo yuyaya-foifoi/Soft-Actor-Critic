@@ -1,10 +1,15 @@
+https://user-images.githubusercontent.com/40622501/172090661-0494efe5-babd-47c5-a2a9-6a07d375ff55.mp4
 
 
-## how to train
+
+
+## training
+
 run  `./notebooks/soft-actor-critic.ipynb` on google colab
 
 ## setting
 `config/config.yml`
+
 ```
 Env: 'FetchReachDense-v1' # gym
 Agent: 'SAC'
@@ -32,4 +37,5 @@ make env_setup
 - “Advanced Reinforcement Learning in Python: from DQN to SAC,” _Udemy_. https://www.udemy.com/course/advanced-reinforcement/ (accessed Jun. 06, 2022).
 - P. Winder, _Reinforcement Learning_. O’Reilly Media, Inc.
 ```
+
 
