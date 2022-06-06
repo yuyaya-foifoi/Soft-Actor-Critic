@@ -1,0 +1,3 @@
+free-mujoco-py
+gym==0.21
+gym[box2d]

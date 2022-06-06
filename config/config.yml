@@ -1,0 +1,7 @@
+Env: 'FetchReachDense-v1'
+Agent: 'SAC'
+Run_ID: 'jun_5_1'
+Transfer: None
+
+Video:
+  Interval: 50
