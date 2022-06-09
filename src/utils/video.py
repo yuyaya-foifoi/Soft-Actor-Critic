@@ -1,37 +1,31 @@
 import os
 from base64 import b64encode
 
-import gym
-from gym.wrappers import (
-    FilterObservation,
-    FlattenObservation,
-    RecordEpisodeStatistics,
-    RecordVideo,
-)
+from gym.wrappers import RecordVideo
 from IPython.display import HTML
 
-from src.utils.config import get_config
+from src.utils.load_config import get_config
 from src.utils.path import define_log_dir
 
 cfg = get_config()
 log_dir = define_log_dir()
 
 
-def create_environment():
+def record_video(env):
     """
     To DO : dict observationsではない環境への対応
     ex. Ant-v2ではエラーが出る
     """
-    env = gym.make(cfg["Env"])
-    env = FilterObservation(env, ["observation", "desired_goal"])
-    env = FlattenObservation(env)
-    env = RecordVideo(
-        env,
-        video_folder=os.path.join(log_dir, "videos"),
-        episode_trigger=lambda x: x % int(cfg["Video"]["Interval"]) == 0,
-    )
-    env = RecordEpisodeStatistics(env)
-    return env
+    if cfg["Video"]["is_Record"]:
+        env = RecordVideo(
+            env,
+            video_folder=os.path.join(log_dir, "videos"),
+            episode_trigger=lambda x: x % int(cfg["Video"]["Interval"]) == 0,
+        )
+        return env
+
+    else:
+        return env
 
 
 def display_video(episode):

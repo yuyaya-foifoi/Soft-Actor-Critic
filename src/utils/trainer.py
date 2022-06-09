@@ -1,7 +1,7 @@
 import torch
 from pytorch_lightning import Trainer
 
-from src.utils.config import get_config
+from src.utils.load_config import get_config
 
 cfg = get_config()
 

@@ -1,10 +1,15 @@
 import os
 
-from src.utils.config import get_config
+from src.utils.load_config import get_config
 
 cfg = get_config()
 
 
 def define_log_dir():
-    path = os.path.join("./logs", cfg["Agent"], cfg["Env"], str(cfg["Run_ID"]))
+    path = os.path.join(
+        "./logs",
+        cfg["Base"]["Agent"],
+        cfg["Base"]["Env"],
+        str(cfg["Base"]["Run_ID"]),
+    )
     return path
