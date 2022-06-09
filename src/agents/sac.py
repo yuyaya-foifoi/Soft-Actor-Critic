@@ -16,8 +16,9 @@ from src.dataset.rl_dataset import RLDataset
 from src.models.dqn import DQN
 from src.models.gradient_policy import GradientPolicy
 from src.rl_utils.averaging import polyak_average
+from src.utils.env import create_env
+from src.utils.load_config import CONFIG_PATH
 from src.utils.path import define_log_dir
-from src.utils.video import create_environment
 
 log_dir = define_log_dir()
 
@@ -44,7 +45,7 @@ class SAC(LightningModule):
         super().__init__()
 
         self.save_hyperparameters()
-        self.env = create_environment()
+        self.env = create_env()
         self._initialize_model()
 
         self._save_cfg()
@@ -56,8 +57,8 @@ class SAC(LightningModule):
 
         self.log = {"Qvalue-loss": [], "Policy-loss": [], "reward": []}
         self.reward = 0.0
-        self.q_loss = 0.0
-        self.policy_loss = 0.0
+        self.q_loss = []
+        self.policy_loss = []
 
     def _initialize_model(self):
 
@@ -165,7 +166,7 @@ class SAC(LightningModule):
             q_loss_total = q_loss1 + q_loss2
             # self.log["Qvalue-loss"].append(q_loss_total)
 
-            self.q_loss += q_loss_total.item()
+            self.q_loss.append(q_loss_total.item())
 
             return q_loss_total
 
@@ -183,7 +184,7 @@ class SAC(LightningModule):
             ).mean()
             # self.log["Policy-loss"].append(policy_loss)
 
-            self.policy_loss += policy_loss.item()
+            self.policy_loss.append(policy_loss.item())
 
             return policy_loss
 
@@ -211,11 +212,11 @@ class SAC(LightningModule):
 
     def _clear_log(self):
         self.reward = 0.0
-        self.q_loss = 0.0
-        self.policy_loss = 0.0
+        self.q_loss = []
+        self.policy_loss = []
 
     def _save_cfg(self):
-        shutil.copy("./config/config.yml", log_dir)
+        shutil.copy(CONFIG_PATH, log_dir)
 
     def _save_hparams(self):
         path = os.path.join(log_dir, "hparams.pkl")
