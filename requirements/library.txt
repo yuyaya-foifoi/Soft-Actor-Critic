@@ -2,3 +2,4 @@ pyvirtualdisplay
 PyOpenGL
 PyOpenGL-accelerate
 pytorch-lightning==1.6.0
+Pillow==9.0.0
