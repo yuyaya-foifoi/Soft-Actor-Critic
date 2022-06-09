@@ -4,6 +4,7 @@ import os
 import random
 import shutil
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
@@ -25,7 +26,6 @@ class SAC(LightningModule):
     def __init__(
         self,
         device,
-        env_name,
         capacity=100_000,
         batch_size=256,
         lr=1e-3,
@@ -52,9 +52,12 @@ class SAC(LightningModule):
         self.buffer = ReplayBuffer(capacity=capacity)
 
         while len(self.buffer) < self.hparams.samples_per_epoch:
-            self.play_episode()
+            self.play_episode(is_logging_reward=False)
 
         self.log = {"Qvalue-loss": [], "Policy-loss": [], "reward": []}
+        self.reward = 0.0
+        self.q_loss = 0.0
+        self.policy_loss = 0.0
 
     def _initialize_model(self):
 
@@ -87,7 +90,7 @@ class SAC(LightningModule):
         self.target_policy = copy.deepcopy(self.policy)
 
     @torch.no_grad()
-    def play_episode(self, policy=None):
+    def play_episode(self, policy=None, is_logging_reward=False):
         obs = self.env.reset()
         done = False
 
@@ -102,6 +105,9 @@ class SAC(LightningModule):
             exp = (obs, action, reward, done, next_obs)
             self.buffer.append(exp)
             obs = next_obs
+
+            if is_logging_reward:
+                self.reward += reward
 
     def forward(self, x):
         """
@@ -159,6 +165,8 @@ class SAC(LightningModule):
             q_loss_total = q_loss1 + q_loss2
             # self.log["Qvalue-loss"].append(q_loss_total)
 
+            self.q_loss += q_loss_total.item()
+
             return q_loss_total
 
         elif optimizer_idx == 1:
@@ -174,19 +182,37 @@ class SAC(LightningModule):
                 self.hparams.alpha * log_probs - action_values
             ).mean()
             # self.log["Policy-loss"].append(policy_loss)
+
+            self.policy_loss += policy_loss.item()
+
             return policy_loss
 
     def training_epoch_end(self, training_step_outputs):
 
-        self.play_episode(policy=self.policy)
+        self.play_episode(policy=self.policy, is_logging_reward=True)
+        self._update_model()
+        self._epoch_end_operation()
 
+    def _update_model(self):
         polyak_average(self.q_net1, self.target_q_net1, tau=self.hparams.tau)
         polyak_average(self.q_net2, self.target_q_net2, tau=self.hparams.tau)
         polyak_average(self.policy, self.target_policy, tau=self.hparams.tau)
 
-        self.log["reward"].append(self.env.return_queue[-1])
+    def _epoch_end_operation(self):
+        self._logging()
+        self._clear_log()
         self._dump_log()
         self._dump_weight()
+
+    def _logging(self):
+        self.log["Qvalue-loss"].append(np.mean(self.q_loss))
+        self.log["Policy-loss"].append(np.mean(self.policy_loss))
+        self.log["reward"].append(self.reward)
+
+    def _clear_log(self):
+        self.reward = 0.0
+        self.q_loss = 0.0
+        self.policy_loss = 0.0
 
     def _save_cfg(self):
         shutil.copy("./config/config.yml", log_dir)

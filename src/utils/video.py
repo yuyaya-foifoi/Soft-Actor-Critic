@@ -18,6 +18,10 @@ log_dir = define_log_dir()
 
 
 def create_environment():
+    """
+    To DO : dict observationsではない環境への対応
+    ex. Ant-v2ではエラーが出る
+    """
     env = gym.make(cfg["Env"])
     env = FilterObservation(env, ["observation", "desired_goal"])
     env = FlattenObservation(env)
