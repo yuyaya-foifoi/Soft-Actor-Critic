@@ -4,6 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
+LOG_STD_MAX = 2
+LOG_STD_MIN = -20
+
 
 class GradientPolicy(nn.Module):
     def __init__(self, hidden_size, obs_size, out_dims, max, device):
@@ -16,24 +19,34 @@ class GradientPolicy(nn.Module):
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
         )
-        self.linear_mu = nn.Linear(hidden_size, out_dims)
-        self.linear_std = nn.Linear(hidden_size, out_dims)
+        self.mu_layer = nn.Linear(hidden_size, out_dims)
+        self.log_std_layer = nn.Linear(hidden_size, out_dims)
 
-    def forward(self, obs):
+    def forward(self, obs, deterministic=False, with_logprob=True):
         if isinstance(obs, np.ndarray):
             obs = torch.from_numpy(obs).to(self.device)
-        x = self.net(obs.float())
-        mu = self.linear_mu(x)
-        std = self.linear_std(x)
-        std = F.softplus(std) + 1e-3
+        net_out = self.net(obs)
+        mu = self.mu_layer(net_out)
+        log_std = self.log_std_layer(net_out)
+        log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
+        std = torch.exp(log_std)
 
-        dist = Normal(mu, std)
-        action = dist.rsample()
-        log_prob = dist.log_prob(action)
-        log_prob = log_prob.sum(dim=-1, keepdim=True)
-        log_prob -= (2 * (np.log(2) - action - F.softplus(-2 * action))).sum(
-            dim=-1, keepdim=True
-        )
+        pi_distribution = Normal(mu, std)
+        if deterministic:
+            action = mu
+        else:
+            action = pi_distribution.rsample()
 
-        action = torch.tanh(action) * self.max
+        if with_logprob:
+            log_prob = pi_distribution.log_prob(action)
+            log_prob = log_prob.sum(dim=-1, keepdim=True)
+            log_prob -= (
+                2 * (np.log(2) - action - F.softplus(-2 * action))
+            ).sum(dim=-1, keepdim=True)
+        else:
+            log_prob = None
+
+        action = torch.tanh(action)
+        action = self.max * action
+
         return action, log_prob

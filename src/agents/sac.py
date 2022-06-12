@@ -6,131 +6,158 @@ import shutil
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from pytorch_lightning import LightningModule
-from torch.optim import AdamW
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 
 from src.dataset.replay_buffer import ReplayBuffer
 from src.dataset.rl_dataset import RLDataset
 from src.models.dqn import DQN
 from src.models.gradient_policy import GradientPolicy
-from src.rl_utils.averaging import polyak_average
+from src.rl_utils.loss import polyak_average
 from src.utils.env import create_env
-from src.utils.load_config import CONFIG_PATH
+from src.utils.load_config import CONFIG_PATH, get_config
 from src.utils.path import define_log_dir
 
 log_dir = define_log_dir()
-
+config = get_config()
 
 class SAC(LightningModule):
-    def __init__(
-        self,
-        device,
-        capacity=100_000,
-        batch_size=256,
-        lr=1e-3,
-        hidden_size=256,
-        gamma=0.99,
-        loss_fn=F.smooth_l1_loss,
-        optim=AdamW,
-        samples_per_epoch=1_000,
-        tau=0.05,
-        epsilon=0.05,
-        alpha=0.02,
-        transfer=False,
-        transfer_path=None,
-    ):
+    def __init__(self):
 
         super().__init__()
+        
+        torch.manual_seed(config['Base']['Seed'])
+        self.device_name = self._set_device()
+    
+        self.train_env = create_env(is_train=True)
+        self.test_env = create_env(is_train=False)
 
-        self.save_hyperparameters()
-        self.env = create_env()
         self._initialize_model()
 
-        self._save_cfg()
-        self._save_hparams()
-        self.buffer = ReplayBuffer(capacity=capacity)
+        if config['Transfer']['is_Transfer']:
+            self._transfer()
 
-        while len(self.buffer) < self.hparams.samples_per_epoch:
-            self.play_episode(is_logging_reward=False)
+        self._save_cfg()
+        self.buffer = ReplayBuffer(capacity=config['Train']['replay_size'])
+
+        while len(self.buffer) < (config['Train']['update_after']):
+            self.play_episode(env=self.train_env, is_initial_buffering=True)
 
         self.log = {"Qvalue-loss": [], "Policy-loss": [], "reward": []}
         self.reward = 0.0
         self.q_loss = []
         self.policy_loss = []
 
+    def _set_device(self):
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        return device
+
     def _initialize_model(self):
 
-        obs_size = self.env.observation_space.shape[0]
-        action_dims = self.env.action_space.shape[0]
-        max_action = self.env.action_space.high
+        obs_size = self.train_env.observation_space.shape[0]
+        action_dims = self.train_env.action_space.shape[0]
+        max_action = self.train_env.action_space.high
 
         self.q_net1 = DQN(
-            self.hparams.hidden_size,
+            config['Model']['hidden_size'],
             obs_size,
             action_dims,
-            self.hparams.device,
+            self.device_name,
         )
         self.q_net2 = DQN(
-            self.hparams.hidden_size,
+            config['Model']['hidden_size'],
             obs_size,
             action_dims,
-            self.hparams.device,
+            self.device_name,
         )
         self.policy = GradientPolicy(
-            self.hparams.hidden_size,
+            config['Model']['hidden_size'],
             obs_size,
             action_dims,
             max_action,
-            self.hparams.device,
+            self.device_name,
         )
 
         self.target_q_net1 = copy.deepcopy(self.q_net1)
         self.target_q_net2 = copy.deepcopy(self.q_net2)
         self.target_policy = copy.deepcopy(self.policy)
 
+    def _transfer(self):
+        weights = torch.load(config['Transfer']['Weight_path'])
+
+        q_net1_w = weights['q_net1']
+        q_net2_w = weights['q_net2']
+        policy_w = weights['policy']
+
+        # validation
+
+        assert self.q_net1.state_dict().keys() == q_net1_w.keys()
+        assert self.target_q_net1.state_dict().keys() == q_net1_w.keys()
+
+        assert self.q_net2.state_dict().keys() == q_net2_w.keys()
+        assert self.target_q_net2.state_dict().keys() == q_net2_w.keys()
+
+        assert self.policy.state_dict().keys() == policy_w.keys()
+        assert self.target_policy.state_dict().keys() == policy_w.keys()
+
+        q_net_overwrite_keys = list(set(q_net1_w.keys()))[1:-1]
+        policy_overwrite_keys = list(set(policy_w.keys()))[1:-1]
+
+        # overwrite
+        self._overwrite_weight(self.q_net1, q_net1_w, q_net_overwrite_keys)
+        self._overwrite_weight(self.target_q_net1, q_net1_w, q_net_overwrite_keys)
+
+        self._overwrite_weight(self.q_net2, q_net2_w, q_net_overwrite_keys)
+        self._overwrite_weight(self.target_q_net2, q_net2_w, q_net_overwrite_keys)
+
+        self._overwrite_weight(self.policy, policy_w, policy_overwrite_keys)
+        self._overwrite_weight(self.target_policy, policy_w, policy_overwrite_keys)
+
+    def _overwrite_weight(self, model, weight, weight_keys: list):
+        for weight_key in weight_keys:
+            model.state_dict()[weight_key] = weight[weight_key]
+
     @torch.no_grad()
-    def play_episode(self, policy=None, is_logging_reward=False):
-        obs = self.env.reset()
+    def play_episode(self, env, is_initial_buffering=False, is_train=True):
+        obs = env.reset()
         done = False
 
         while not done:
-            if policy and random.random() > self.hparams.epsilon:
-                action, _ = self.policy(obs)
+            if is_initial_buffering:
+                action = env.action_space.sample()
+            if not is_initial_buffering:
+                if is_train:
+                    action, _ = self.policy(obs, deterministic=False)
+                if not is_train:
+                    action, _ = self.policy(obs, deterministic=True)
                 action = action.cpu().numpy()
-            else:
-                action = self.env.action_space.sample()
 
-            next_obs, reward, done, info = self.env.step(action)
+            next_obs, reward, done, info = env.step(action)
             exp = (obs, action, reward, done, next_obs)
-            self.buffer.append(exp)
             obs = next_obs
 
-            if is_logging_reward:
+            if is_initial_buffering or is_train:
+                self.buffer.append(exp)
+
+            if not is_train:
                 self.reward += reward
 
-    def forward(self, x):
-        """
-        foward 関数は主に評価時に用いる
-        評価時には決定論的なpolicy関数から行動を出力し,
-        エージェントがその行動を実行する
-        """
-        output = self.policy(x)
-        return output
 
     def configure_optimizers(self):
         q_net_params = itertools.chain(
             self.q_net1.parameters(), self.q_net2.parameters()
         )
-        q_net_optimizer = self.hparams.optim(q_net_params, lr=self.hparams.lr)
-        policy_optimizer = self.hparams.optim(
-            self.policy.parameters(), lr=self.hparams.lr
+        q_net_optimizer = Adam(q_net_params, lr=config['Train']['critic_lr'])
+        policy_optimizer = Adam(
+            self.policy.parameters(), lr=config['Train']['actor_lr']
         )
         return [q_net_optimizer, policy_optimizer]
 
     def train_dataloader(self):
-        dataset = RLDataset(self.buffer, self.hparams.samples_per_epoch)
+        dataset = RLDataset(self.buffer, config['Train']['samples_per_epoch'])
         dataloader = DataLoader(dataset=dataset, batch_size=1)
         return dataloader
 
@@ -152,18 +179,14 @@ class SAC(LightningModule):
 
             next_actions_values[dones] = 0.0
 
-            expected_action_values = rewards + self.hparams.gamma * (
-                next_actions_values - self.hparams.alpha * target_log_probs
+            expected_action_values = rewards + config['Train']['gamma'] * (
+                next_actions_values - config['Train']['alpha'] * target_log_probs
             )
 
-            q_loss1 = self.hparams.loss_fn(
-                action_values1, expected_action_values
-            )
-            q_loss2 = self.hparams.loss_fn(
-                action_values2, expected_action_values
-            )
+            loss_q1 = ((action_values1 - expected_action_values)**2).mean()
+            loss_q2 = ((action_values2 - expected_action_values)**2).mean()
 
-            q_loss_total = q_loss1 + q_loss2
+            q_loss_total = loss_q1 + loss_q2
             # self.log["Qvalue-loss"].append(q_loss_total)
 
             self.q_loss.append(q_loss_total.item())
@@ -180,7 +203,7 @@ class SAC(LightningModule):
             )
 
             policy_loss = (
-                self.hparams.alpha * log_probs - action_values
+                config['Train']['alpha'] * log_probs - action_values
             ).mean()
             # self.log["Policy-loss"].append(policy_loss)
 
@@ -190,14 +213,15 @@ class SAC(LightningModule):
 
     def training_epoch_end(self, training_step_outputs):
 
-        self.play_episode(policy=self.policy, is_logging_reward=True)
+        self.play_episode(env=self.train_env, is_train=True)
+        self.play_episode(env=self.test_env, is_train=False)
         self._update_model()
         self._epoch_end_operation()
 
     def _update_model(self):
-        polyak_average(self.q_net1, self.target_q_net1, tau=self.hparams.tau)
-        polyak_average(self.q_net2, self.target_q_net2, tau=self.hparams.tau)
-        polyak_average(self.policy, self.target_policy, tau=self.hparams.tau)
+        polyak_average(self.q_net1, self.target_q_net1, rho=config['Train']['polyak_rho'])
+        polyak_average(self.q_net2, self.target_q_net2, rho=config['Train']['polyak_rho'])
+        polyak_average(self.policy, self.target_policy, rho=config['Train']['polyak_rho'])
 
     def _epoch_end_operation(self):
         self._logging()

@@ -20,6 +20,8 @@ def record_video(env):
         env = RecordVideo(
             env,
             video_folder=os.path.join(log_dir, "videos"),
+            name_prefix=cfg["Base"]["Env"] + "-" + cfg["Base"]["Run_ID"],
+            video_length=cfg["Video"]["Len"],
             episode_trigger=lambda x: x % int(cfg["Video"]["Interval"]) == 0,
         )
         return env

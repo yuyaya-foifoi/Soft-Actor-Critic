@@ -8,16 +8,19 @@ https://user-images.githubusercontent.com/40622501/172090661-0494efe5-babd-47c5-
 run  `./notebooks/soft-actor-critic.ipynb` on google colab
 
 ## setting
-`config/config.yml`
+`config/config.py`
 
 ```
-Env: 'FetchReachDense-v1' # gym
-Agent: 'SAC'
-Run_ID: '${}'
-Transfer: None # To DO : for transfer learning
-
-Video:
-  Interval: 50 # how frequent you want to dump video 
+"Base": {
+        "Env": "FetchPickAndPlaceDense-v1", # env name
+        "Agent": "SAC", # algo name (SAC only so far)
+        "Run_ID": {}, # str
+        ...
+    },
+"Transfer": {
+    "is_Transfer": False, # bool
+    "Weight_path": ${path/to/pkl},
+},
 ```
 
 ## code formatter
@@ -25,9 +28,14 @@ Video:
 make style
 ```
 
-## setup environment
+## setup gym environment
 ```
-make env_setup
+make setup_gym
+```
+
+## setup gym environment
+```
+make setup_brax
 ```
 
 ## reference

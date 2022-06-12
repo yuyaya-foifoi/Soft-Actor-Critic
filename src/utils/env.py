@@ -11,21 +11,24 @@ from src.utils.video import record_video
 cfg = get_config()
 
 
-def create_env():
+def create_env(is_train: True):
     env = gym.make(cfg["Base"]["Env"])
     env = env_preprocess(env)
-    env = record_video(env)
     env = record_log(env)
+
+    if not is_train:
+        env = record_video(env)
+
     return env
 
 
 def env_preprocess(env: gym.wrappers) -> gym.wrappers:
-    if cfg["Train"]["Env_preprocess"] == "dict":
+    if cfg["Train"]["env_preprocess"] == "robotics":
         env = FilterObservation(env, ["observation", "desired_goal"])
         env = FlattenObservation(env)
         return env
 
-    if cfg["Train"]["Env_preprocess"] == None:
+    if cfg["Train"]["env_preprocess"] == "mujoco":
         return env
 
 
